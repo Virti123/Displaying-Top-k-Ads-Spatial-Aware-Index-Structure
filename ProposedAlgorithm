@@ -1,0 +1,823 @@
+//C++ Implementation of Top-k geometric intersection queries motivated by ad auctions.
+#include <chrono> 
+#include <fstream>
+#include<iostream>
+#include <boost/config.hpp>
+#include <boost/version.hpp>
+#include <fstream>
+#include <random>
+#include <math.h>
+#include <unistd.h>
+
+// CGAL headers
+#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <CGAL/Apollonius_graph_2.h>
+#include <CGAL/Apollonius_graph_hierarchy_2.h>
+#include <CGAL/Apollonius_graph_filtered_traits_2.h>
+#include <CGAL/point_generators_2.h>
+#if BOOST_VERSION >= 105600 && (! defined(BOOST_GCC) || BOOST_GCC >= 40500)
+#endif
+
+#include <boost/random/linear_congruential.hpp>
+#include <boost/random/uniform_real.hpp>
+#include <QtGui>
+#include <QString>
+#include <QActionGroup>
+#include <QFileDialog>
+#include <QInputDialog>
+#include <CGAL/Qt/ApolloniusGraphGraphicsItem.h>
+#include<CGAL/Qt/GraphicsViewCircleInput.h>
+#include<CGAL/Voronoi_diagram_2/Apollonius_graph_nearest_site_2.h>
+#include <CGAL/Simple_cartesian.h>
+#include <CGAL/Qt/Converter.h>
+#include <CGAL/Qt/utility.h>
+#include<CGAL/Apollonius_graph_adaptation_traits_2.h>
+#include <CGAL/Qt/DemosMainWindow.h>
+#include <CGAL/MP_Float.h>
+#include <CGAL/Random.h>
+#include <CGAL/Apollonius_graph_adaptation_policies_2.h>
+#include <CGAL/Voronoi_diagram_2.h>
+#include <QPointF>
+#include <CGAL/Delaunay_triangulation_2.h>
+#include <CGAL/Delaunay_triangulation_adaptation_traits_2.h>
+#include <CGAL/Delaunay_triangulation_adaptation_policies_2.h>
+
+
+
+typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
+
+typedef K::Point_2 Point_2;
+typedef K::Iso_rectangle_2 Iso_rectangle_2;
+
+typedef CGAL::Apollonius_graph_filtered_traits_2<K,CGAL::Integral_domain_without_division_tag>  Gt;
+
+typedef Gt::Point_2                           Point_2;
+typedef K::Circle_2                           Circle_2;
+typedef Gt::Site_2                            Apollonius_site_2;
+typedef Gt::Site_2::Weight                    Weight;
+
+typedef CGAL::Apollonius_graph_2<Gt> Apollonius;
+
+//typedef CGAL::Voronoi_diagram_2<Gt> VDA;
+
+typedef Apollonius::Vertex_handle Vertex_handle;
+
+using namespace std;
+
+
+
+/* Data Members of the structure Test
+   x = x-coordinate of the point,
+   y = y-coordinate of the point,
+   w = weight of the point,
+   euclid = Stores the Euclidean Distance between the point and Query Point
+ */
+struct Test 
+{ 
+   double x, y, w;
+   float euclid; 
+};
+
+
+struct RankSample{
+	vector<Test> sample;
+	Apollonius ag;
+};
+
+/* A binary tree node has following data members
+   data = Vector to store points,
+   ag = stores additive vornoi diagram of the node,
+   left = pointer to left child,
+   right = pointer to right child */
+struct Node { 
+   // vector<Test> data;
+    Apollonius ag;     
+    Node* left; 
+    Node* right; 
+};
+
+
+ //Given a binary tree, print leaf nodes 
+void printPostorder(struct Node* node,Apollonius ag) 
+{ 
+    Point_2 p;
+    Apollonius_site_2 site;
+    if (node == NULL) 
+        return; 
+  
+    // first recur on left subtree 
+    if(node->left !=NULL)
+    {
+      printPostorder(node->left,(node->left)->ag); 
+    }
+    else
+    {
+      printPostorder(node->left,node->ag); 
+    }
+  
+    // then recur on right subtree 
+    if(node->right !=NULL)
+    {
+      printPostorder(node->right,(node->right)->ag); 
+    }
+    else
+    {
+      printPostorder(node->right,node->ag);
+    }
+  
+    // now deal with the node. if the node is leaf node
+    //print all the members of data vector of tree node
+    if(node->left==NULL && node->right==NULL)
+    {  
+      
+
+      Apollonius::Finite_vertices_iterator vit;
+      for (vit = ag.finite_vertices_begin();  vit != ag.finite_vertices_end(); ++vit) {
+        std::cout << "Vertex ";
+        std::cout << vit->site().point();
+        std::cout << "\n";
+      }
+
+      printf("\n\n");
+    }
+}
+
+
+/*this function creates a random binary tree and also max structure on each node*/
+//vector<Test> vectorR,vectorL;
+int flag=0;
+Apollonius_site_2  site;
+Point_2 p;  
+
+struct Node* createBinaryTreeAndMaxStructure(vector<Test> &v,int start_index,int end_index)
+{
+  struct Node* newnode ;
+  newnode = new Node();
+  for(int cin=start_index;cin<=end_index;cin++)
+  {
+      p=Point_2(v[cin].x,v[cin].y);
+      site=Gt::Site_2(p,v[cin].w);
+      newnode->ag.insert(site);
+  }
+
+  if(end_index-start_index==3 || end_index-start_index==4 ||  end_index-start_index==2 || end_index-start_index==5 || end_index-start_index==6)
+  {
+    newnode->left=NULL;
+    newnode->right=NULL;
+  }
+  else
+  {
+    newnode->left=createBinaryTreeAndMaxStructure(v,start_index,((end_index-start_index)/2+start_index));
+;
+    if(end_index-start_index==1)
+    {
+
+    newnode->right=createBinaryTreeAndMaxStructure(v,end_index,((end_index-start_index)/2+end_index)); 
+    }
+    else
+    {
+      newnode->right=createBinaryTreeAndMaxStructure(v,start_index+(end_index-start_index)/2+1,end_index); 
+    }
+  }
+ 
+  return newnode;
+}
+
+
+vector<Test> priortizedVector;
+//this function creates a Prioritized structure that will be used in top-k framework.
+vector<Test> createPrioritzedStructure(struct Node* Tree,float dist,float xval,float yval,float termination_value)
+{
+   float euclidianDist;
+  Point_2 p;
+  float a,b,c;
+  p = Point_2(xval,yval);
+  Vertex_handle vh = Tree->ag.nearest_neighbor(p);
+  a = vh->site().x();
+  b = vh->site().y();
+  c = vh->site().weight();
+  euclidianDist = sqrt(pow( p.x()-a,2)+pow(p.y()-b,2))-c;
+  
+  
+  //if leaf node. a prioritized query report all the element with w(e) <= τ
+  if(euclidianDist<=dist && Tree->left==NULL && Tree->right==NULL)
+  {
+
+    Apollonius::Finite_vertices_iterator vit;
+     for (vit = Tree->ag.finite_vertices_begin();  vit != Tree->ag.finite_vertices_end(); ++vit) {
+      //std::cout << "Vertex ";
+      //std::cout << vit->site().point();
+      a = vit->site().x();
+      b = vit->site().y();
+      c = vit->site().weight();
+      //cout << "\n";
+      euclidianDist = sqrt(pow( p.x()-a,2)+pow(p.y()-b,2))-c;
+    if(euclidianDist<=dist)
+    {
+    priortizedVector.push_back({a,b,c});
+    if(priortizedVector.size()>termination_value)
+    {
+      priortizedVector.clear();
+      return priortizedVector;
+    }
+  }
+  }
+  }
+  //if internal node and w(e) <= τ then recurse through both child(left and right)
+  else if(euclidianDist<=dist)
+  {
+    if(Tree->left!=NULL)
+    { 
+      createPrioritzedStructure(Tree->left,dist,xval,yval,termination_value);
+    }
+    if(Tree->right!=NULL)
+    {
+      createPrioritzedStructure(Tree->right,dist,xval,yval,termination_value);
+    }
+  }
+  return priortizedVector;
+
+}
+
+
+
+/* Rank Sampling
+   Given a set S of real values, and a real
+   value 0 < p ≤ 1, we define a p-sample set of S to be a
+   set R obtained by the following random process. At the
+   beginning, R = ∅; then, each element of S is added to R
+   with probability p independently.*/
+vector<Test> createRankSample(vector<Test> &v,float k)
+{
+  float num;
+  vector<Test> R;
+  //randomly generate numbers in range 0 to 1
+  const float range_from = 0;
+  const float range_to = 1;
+  std::random_device    rand_dev;
+  std::mt19937    generator(rand_dev());
+  std::uniform_real_distribution<float> distr(range_from,range_to);
+  float s = 1/k;
+  for(int i=0;i<v.size();i++)
+  {  
+    num = (float)distr(generator);
+    //if 0<=num<=1/k select the element else reject it.
+    if(num<=s)
+    {
+      R.push_back(v[i]);
+    }
+  }
+
+  return R;
+
+}
+
+//struct to return multiple values from a function.
+struct Foo
+{
+     double value1;
+     double value2;
+     double value3;
+     float value4;
+};
+
+
+/* It searches for med in arr[l..r], and partitions the array  
+ around med. 
+ */
+int partition(vector<Test> &arr, int l, int r, Foo med,float p,float q) 
+{ 
+    // Search for med in arr[l..r] and move it to end 
+    int i; 
+    float temp1,temp2,temp3,temp4;
+    for (i=l; i<r; i++) 
+        if (arr[i].x == med.value1 && arr[i].y==med.value2) 
+           break; 
+    temp1 = arr[i].x;
+    temp2 = arr[i].y;
+    temp3 = arr[i].w;
+    temp4 = arr[i].euclid;
+    arr[i].x = arr[r].x;
+    arr[i].y = arr[r].y;
+    arr[i].w = arr[r].w;
+    arr[i].euclid = arr[r].euclid;
+    arr[r].x = temp1;
+    arr[r].y = temp2;
+    arr[r].w = temp3;
+    arr[r].euclid = temp4;
+
+    /* Standard partition process of QuickSort(). 
+       It considers the median element returned(now the last element in arr[l...r]) as pivot 
+       and moves all smaller element to left of it and greater elements to right 
+    */
+    float x = med.value1;
+    float y = med.value2;
+    float z = med.value3;
+    float distance = sqrt(pow( x-p,2)+pow(y-q,2))-z;
+    float cur_distance;
+    i = l; 
+    for (int j = l; j <= r - 1; j++) 
+    { 
+        cur_distance = sqrt(pow( arr[j].x-p,2)+pow(arr[j].y-q,2))-arr[j].w;
+        if (cur_distance <= distance) 
+        { 
+            temp1 = arr[i].x;
+            temp2 = arr[i].y;
+            temp3 = arr[i].w;
+            temp4 = arr[i].euclid;
+            arr[i].x = arr[j].x;
+            arr[i].y = arr[j].y;
+            arr[i].w = arr[j].w;
+            arr[i].euclid = arr[j].euclid;
+            arr[j].x = temp1;
+            arr[j].y = temp2;
+            arr[j].w = temp3;
+            arr[j].euclid = temp4;
+            i++; 
+        } 
+    } 
+    temp1 = arr[i].x;
+    temp2 = arr[i].y;
+    temp3 = arr[i].w;
+    temp4 = arr[i].euclid;
+    arr[i].x = arr[r].x;
+    arr[i].y = arr[r].y;
+    arr[i].w = arr[r].w;
+    arr[i].euclid = arr[r].euclid;
+    arr[r].x = temp1;
+    arr[r].y = temp2;
+    arr[r].w = temp3; 
+    arr[r].euclid = temp4;
+   
+    return i; 
+} 
+
+
+
+//this function helps to sort structure.
+bool compare(Test a,Test b)
+{
+  if(a.euclid-a.w<=b.euclid-a.w)
+    return 1;
+  else
+    return 0;
+}
+
+
+
+
+Foo findMedian(vector<Test> &t, int n) 
+{ 
+  // Sort the array 
+  sort(t.begin(), t.end(),compare);
+  Foo FinalResult = {t[n/2].x,t[n/2].y,t[n/2].w,t[n/2].euclid};
+
+  // Return middle element 
+  return FinalResult  ;   
+} 
+
+
+
+/* This function returns k'th smallest  
+   element in arr[l..r] using QuickSort  
+   based method. 
+   ASSUMPTION: All the elements in vector arr[] are distinct
+*/ 
+Foo kthSmallest(vector<Test> &arr, int l, int r, int k,float queryX, float queryY) 
+{ 
+    // If k is smaller than number of elements in array 
+    if (k > 0 && k <= r - l + 1) 
+    { 
+      // Number of elements in arr[l..r] 
+      int n = r-l+1; 
+      int i;
+      vector<Test> median,medresult;
+      // There will be floor((n+4)/5) groups; 
+      //median.reserve((n+4)/5);
+      double d;
+      Foo answer;
+
+      // Divide arr[] in groups of size 5, calculate median 
+      // of every group and store it in median[] array.
+      for (i=0; i<n/5; i++) 
+      {
+        sort(arr.begin()+l+i*5,arr.begin()+l+i*5+5,compare);
+        for(int pos1=l+i*5;pos1<l+i*5+5;pos1++)
+        {
+          //Calculate the euclidian distance between the query point and current point and store the information.
+          medresult.push_back(arr[pos1]);
+        }
+        //find the median of the 5 elements and store the info in median vector
+        answer = findMedian(medresult, 5); 
+        median.push_back({answer.value1,answer.value2,answer.value3,answer.value4});        
+        medresult.clear();
+        }
+        medresult.clear();
+       
+        //For last group with less than 5 elements
+        if (i*5 < n)  
+        { 
+          sort(arr.begin()+l+i*5,arr.begin()+l+i*5+(n%5),compare);
+          for(int pos1=l+i*5;pos1<l+i*5+(n%5);pos1++)
+          {
+            //Calculate the euclidian distance between the query point and current point and store the information.
+            //d = sqrt(pow( arr[pos1].x-queryX,2)+pow(arr[pos1].y-queryY,2))-arr[pos1].w;
+            //arr[pos1].euclid = d;
+            medresult.push_back(arr[pos1]);
+          }
+          //find the median of the remaining elements and store the info in median vector 
+          
+          answer = findMedian(medresult, n%5);  
+       
+          median.push_back({answer.value1,answer.value2,answer.value3,answer.value4});
+          i++; 
+        }  
+      
+
+        Foo medOfMed;
+        //if only one element return it as median
+        if(i == 1)
+        {
+           
+            medOfMed = {median[0].x,median[0].y,median[0].w,median[0].euclid};
+          
+        }
+        else
+        {
+          //recur by setting l=0,r=i-1 and k=i/2 as median can lie in this range only.
+          medOfMed =  kthSmallest(median, 0, i-1, i/2,queryX,queryY);
+         
+        }  
+      
+        int pos = partition(arr, l, r, medOfMed,queryX,queryY);
+
+        //If position is same as k 
+        if (pos-l == k-1) 
+        {
+          //return k-th smallest element
+         Foo result = { arr[pos].x, arr[pos].y,arr[pos].w,arr[pos].euclid};
+          return result; 
+        }
+
+        // If position is more, recur for left
+        if (pos-l > k-1)   
+        {
+          
+          return kthSmallest(arr, l, pos-1, k,queryX,queryY); 
+        }
+
+        // Else recur for right subarray 
+        return kthSmallest(arr, pos+1, r, k-pos+l-1,queryX,queryY); 
+    } 
+  
+    // If k is more than number of elements in array then return failure
+    Foo result = { 0.001, 0.001,0.001,0.001};
+    return result; 
+} 
+
+
+
+
+/*A framework for obtaining top-k geometric intersection queries
+*/
+vector<Test> topkFramework(struct Node* Tree,vector<RankSample> &Rsample,int k, vector<Test> &dataset,float queryX,float queryY)
+{
+	//set Qmax to 2*logn
+	int n = log2(dataset.size());
+	int h = log2(dataset.size());
+	int j=0;
+	float Kh,Kval;
+	Kval = log(dataset.size());
+	vector<Test> result;
+
+	//Top-Qmax(n) and then extract top k using k-selection
+	if(k<n)
+	{
+		result = topkFramework(Tree,Rsample,n,dataset,queryX,queryY);
+    
+    	return result;
+	}
+	else
+	{
+    
+	    Kh = n * pow(1.05,h-1);
+
+	     //Find if k<=Kh
+	    if(k<=Kh)
+	    {
+	    	
+	    	//If k ≤ K h , set j∗ to the smallest integer i satisfying Ki ≥ k; note that
+	      //Kj = Θ(k). 
+	        while(Kval<k)
+	        {
+	          j++;
+	          Kval = n * pow(1.05,j-1);
+	          
+	        }
+
+	        //In case of failure we increase j. 
+	        //Step 6(a) in algorithm check if j<=h then start from step 1 of algorithm.
+	     	while(j<=h)
+	    	{
+
+	    		//Step 1 of algorithm. Determine whether |Dataset| < 4Kj
+	        	if(dataset.size()<4*Kval)
+	        	{
+	        		//Round successfull. Return Dataset. Terminate the whole algorithm
+	        		//Terminate the whole algorithm
+	        		return(dataset);
+	       		 }
+	        	else
+	        	{
+	        		//Step 2 of algorithm
+	        		//If there are |Dataset|>=4Kj+1 Use a rank sample
+	        		//Calculating the euclidian distance of element e in RankSample Rj with the minimum distance from the query point.
+	        		//Using max structure calculating the min euclidian distance
+	        	
+	        		Point_2 p;
+	        	
+	        		Vertex_handle vh;
+	       			p=Point_2(queryX,queryY);
+	       			vh = Rsample[j-1].ag.nearest_neighbor(p);
+             
+	        		float maxDist = sqrt(pow( queryX-vh->site().x(),2)+pow(queryY-vh->site().y(),2))-vh->site().weight();
+              
+	        		priortizedVector.clear(); 
+
+	        		//Step 3 of Algorithm. Performing a prioritized query on D with q, w, and τ = w(e)
+	        		vector<Test> S = createPrioritzedStructure(Tree,maxDist,queryX,queryY,4*Kval);
+	   
+	        		if(S.size()>0 && S.size()>Kval)
+	        		{
+	        			//Step 3(a). Either the query terminates by itself, out-putting a set S of elements,
+	        			//Terminate the algorithm
+	            		return S;
+	        		}
+	        		else
+	        		{
+	        			//Either • Case 3(a) occurred, but |S| ≤ Kj . • Case 3(b) occurred.
+	        			
+
+	        			j = j+1;
+	        		}
+	    		}
+	    	}
+
+	    	//Failure at step 6(a) of algorithm. answer the top-k query naively by reading the whole D in O(n) = O(Kj) time.
+	    	
+	    	return (dataset);
+	    }
+	    else
+	    {
+	    	//failure of k>Kh
+	      // answer the top-k query naively
+	      return (dataset);
+	    }
+	}
+
+}
+
+
+using namespace std::chrono; 
+int main(int argc, char **argv)
+{
+	//****PREPROCESSING  START*******
+
+  //sleep(60);
+  cout<<"PREPROCESSING STARTED"<<"\n";
+  //sleep(30);
+	//Open input file 
+	std::ifstream ifs("sites.cin");
+	assert( ifs );
+	Apollonius ag;      //Apol 
+	Apollonius_site_2  site;
+	std::vector<Test> val;
+	float a,b;
+	Point_2 p;
+	int num=0;
+	double tempX=0,tempY=0,tempW=0;
+
+	//create a vector from input file
+	while ( ifs >> site )
+	{
+		val.push_back({site.x(),site.y(),site.weight()});
+	}
+
+	//create a random permutation 
+	for(int i=val.size()-1;i>=0;i--)
+	{
+		const int range_from  = 0;
+	    const int range_to    = i;
+	    std::random_device                  rand_dev;
+	    std::mt19937                        generator(rand_dev());
+	    std::uniform_int_distribution<int>  distr(range_from, range_to);
+	    num = distr(generator);
+	    tempX = val[num].x;
+	    tempY = val[num].y;
+	    tempW = val[num].w;
+	    val[num].x = val[i].x;
+	    val[num].y = val[i].y;
+	    val[num].w = val[i].w;
+	    val[i].x = tempX;
+	    val[i].y = tempY;
+	    val[i].w = tempW;
+	}
+
+
+
+
+  //cout<<"DONE CREATING A RANDOM PERMUTATION"<<"\n";
+  //sleep(60);
+	//create binary tree from random permutation and create a max structure on each node
+	struct Node* head = createBinaryTreeAndMaxStructure(val,0,val.size()-1);
+  //sleep(10);
+  //cout<<"DONE CREATING BINARY TREE AND MAX STRUCTURE"<<"\n";
+  // sleep(60);
+
+  //printPostorder(head,head->ag);
+
+	//creating 1/Ki Sample
+	float Qmax,Kval;
+	Qmax = log2(val.size());
+	vector<RankSample> R;
+	vector<Test> temp;
+  Apollonius ap;
+	int height = log2(val.size());
+	for(int i=0;i<height;i++)
+	{
+		Kval = Qmax * pow(1.05,i-1);
+
+		temp = createRankSample(val,Kval);
+		for(int cin=0;cin<temp.size();cin++)
+    	{
+    		p=Point_2(temp[cin].x,temp[cin].y);
+    		site=Gt::Site_2(p,temp[cin].w);
+    		ap.insert(site);
+    	}
+		R.push_back({temp,ap});
+    temp.clear();
+    ap.clear();
+		
+	}
+  cout<<"DONE CREATING RANK SAMPLES"<<"\n";
+  //sleep(60);
+  cout<<"PREPROCESSING OVER"<<"\n";
+  //sleep(30);
+
+	//******PREPROCESSING  OVER*******
+
+
+  vector<Test> FinalSet;
+	//Input k
+
+	ifstream ids("queries1.dt.cin");
+	//vector<Test> FinalSet;
+  ofstream myfile;
+  ofstream timefile;
+  myfile.open ("FinalOutput1.txt");
+  timefile.open ("Time1.txt");
+	//Do for all the input query points 
+	while(ids>>p)
+	{  
+      int k=1;
+		  //Start clock for runtime
+	    auto start1 = high_resolution_clock::now(); 
+	    ios_base::sync_with_stdio(false);
+	    //clock_t tStart = clock();
+	    //Read the input query points.
+	    a = p.x();
+	    b = p.y();
+
+	    myfile<<"-----------------------------------------------------------\n";
+	    //call top-k framework and output top-k ads.
+	    FinalSet = topkFramework(head,R,k,val,a,b);
+      double d;
+      for(int col=0;col<FinalSet.size();col++)
+     {
+    
+        d = sqrt(pow( FinalSet[col].x-a,2)+pow(FinalSet[col].y-b,2))-FinalSet[col].w;
+        FinalSet[col].euclid = d;
+     }
+     
+	    //Using k-selection algorith print the top k ads for query point a,b
+	    myfile<<"****The top "<<k<<" ads for points "<<a<<" "<<b<<" are **** " <<"\n";
+	    Foo temp;
+	    for(int u=1;u<=k;u++){
+	      temp = kthSmallest(FinalSet, 0, FinalSet.size() - 1, u,a,b); 
+	      myfile<<u<<") " << temp.value1<<" "<<temp.value2<<"\n";
+       }
+
+	   	//Stop the clock for runtime
+		  auto stop = high_resolution_clock::now();
+	 	  auto duration = duration_cast<microseconds>(stop - start1); 
+	    myfile<< "\n\nTime taken by function: "<< duration.count() << " microseconds" ;
+	    myfile<<"\n";
+      timefile<<duration.count();
+      timefile<<"\n";
+      FinalSet.clear();
+    
+	}
+  FinalSet.clear();
+  myfile.close();
+	ids.close();  
+
+
+  ifstream ims("queries10.dt.cin");
+  ofstream myfile10;
+  ofstream timefile10;
+  myfile10.open ("FinalOutput10.txt");
+  timefile10.open ("Time10.txt");
+  //Do for all the input query points 
+  while(ims>>p)
+  {  
+      int k=10;
+      //Start clock for runtime
+      auto start1 = high_resolution_clock::now(); 
+      ios_base::sync_with_stdio(false);
+      //clock_t tStart = clock();
+      //Read the input query points.
+      a = p.x();
+      b = p.y();
+
+      myfile10<<"-----------------------------------------------------------\n";
+    
+      //call top-k framework and output top-k ads.
+      FinalSet = topkFramework(head,R,k,val,a,b);
+      double d;
+      for(int col=0;col<FinalSet.size();col++){
+        d = sqrt(pow( FinalSet[col].x-a,2)+pow(FinalSet[col].y-b,2))-FinalSet[col].w;
+        FinalSet[col].euclid = d;
+     }
+     
+      //Using k-selection algorith print the top k ads for query point a,b
+      myfile10<<"****The top "<<k<<" ads for points "<<a<<" "<<b<<" are **** " <<"\n";
+      Foo temp;
+      for(int u=1;u<=k;u++){
+        temp = kthSmallest(FinalSet, 0, FinalSet.size() - 1, u,a,b); 
+        myfile10<<u<<") " << temp.value1<<" "<<temp.value2<<"\n";          
+      }
+      //Stop the clock for runtime
+     auto stop = high_resolution_clock::now();
+     auto duration = duration_cast<microseconds>(stop - start1); 
+      myfile10<< "\n\nTime taken by function: "<< duration.count() << " microseconds" ;
+      myfile10<<"\n";
+      timefile10<<duration.count();
+      timefile10<<"\n";
+      FinalSet.clear();
+  }
+  myfile10.close();
+  ims.close();  
+
+ 
+
+
+  ifstream bms("queries5.dt.cin");
+  ofstream myfile5;
+
+  ofstream timefile5;
+  myfile5.open ("FinalOutput5.txt");
+  timefile5.open ("Time5.txt");
+  //Do for all the input query points 
+  while(bms>>p)
+  {  
+    int k=5;
+    //Start clock for runtime
+      auto start1 = high_resolution_clock::now(); 
+      ios_base::sync_with_stdio(false);
+      //clock_t tStart = clock();
+      //Read the input query points.
+      a = p.x();
+      b = p.y();
+      myfile5<<"-----------------------------------------------------------\n";
+
+      //call top-k framework and output top-k ads.
+      FinalSet = topkFramework(head,R,k,val,a,b);
+      double d;
+      for(int col=0;col<FinalSet.size();col++){
+        d = sqrt(pow( FinalSet[col].x-a,2)+pow(FinalSet[col].y-b,2))-FinalSet[col].w;
+        FinalSet[col].euclid = d;
+      }
+     
+      //Using k-selection algorith print the top k ads for query point a,b
+      myfile5<<"****The top "<<k<<" ads for points "<<a<<" "<<b<<" are **** " <<"\n";
+      Foo temp;
+      for(int u=1;u<=k;u++){
+        temp = kthSmallest(FinalSet, 0, FinalSet.size() - 1, u,a,b); 
+        myfile5<<u<<") " << temp.value1<<" "<<temp.value2<<"\n";
+      }
+
+      //Stop the clock for runtime
+      auto stop = high_resolution_clock::now();
+      auto duration = duration_cast<microseconds>(stop - start1); 
+      myfile5<< "\n\nTime taken by function: "<< duration.count() << " microseconds" ;
+      myfile5<<"\n";
+      timefile5<<duration.count();
+      timefile5<<"\n";
+      FinalSet.clear();    
+  }
+myfile5.close();
+timefile5.close();
+bms.close();  
+
+return 0;
+}
